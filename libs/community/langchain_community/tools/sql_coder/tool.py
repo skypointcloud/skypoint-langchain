@@ -67,7 +67,7 @@ class QuerySparkSQLDataBaseTool(StateTool):
         executable_query = executable_query.strip('\"')
         executable_query = re.sub('\\n```', '',executable_query)
         self.db.run_no_throw(executable_query)
-        return self.db.run_no_throw(executable_query)
+        return self.db.run_no_throw(executable_query, include_columns=True)
 
     async def _arun(
         self,
