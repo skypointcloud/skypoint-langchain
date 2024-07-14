@@ -14,6 +14,7 @@ from langchain_core.pydantic_v1 import BaseModel, Extra, Field
 from langchain_core.tools import StateTool
 import re
 
+ERROR = ""
 class BaseSQLDatabaseTool(BaseModel):
     """Base tool for interacting with a SQL database."""
 
@@ -43,7 +44,7 @@ class QuerySparkSQLDataBaseTool(StateTool):
     description: str = """
     Input to this tool is a detailed and correct SQL query, output is a result from the database.
     If the query is not correct, an error message will be returned.
-    If an error is returned, re-run the sql_db_query_creator tool to get the correct query.
+    If an error is returned, re-run the retry_sql_db_query_creator tool to get the correct query.
     """
 
     def __init__(__pydantic_self__, **data: Any) -> None:
@@ -65,7 +66,8 @@ class QuerySparkSQLDataBaseTool(StateTool):
         )
         executable_query = executable_query.strip('\"')
         executable_query = re.sub('\\n```', '',executable_query)
-        return self.db.run_no_throw(executable_query)
+        self.db.run_no_throw(executable_query)
+        return self.db.run_no_throw(executable_query, include_columns=True)
 
     async def _arun(
         self,
@@ -75,14 +77,98 @@ class QuerySparkSQLDataBaseTool(StateTool):
         raise NotImplementedError("QuerySparkSQLDataBaseTool does not support async")
 
     def _extract_sql_query(self):
-        for value in self.state:
+        for value in reversed(self.state):
             for key, input_string in value.items():
-                if "sql_db_query_creator" in key:
+                if "tool='retry_sql_db_query_creator'" in key:
+                    return input_string
+                elif "tool='sql_db_query_creator'" in key:
+                    return input_string
+        return None
+    
+
+
+class RetrySqlQueryCreatorTool(StateTool):
+    """Tool for re-creating SQL query.Use this to retry creation of sql query."""
+
+    name = "retry_sql_db_query_creator"
+    description = """
+    This is a tool used to re-create sql query for user input based on the incorrect query generated and error returned from sql_db_query tool.
+    Input to this tool is user prompt, incorrect sql query and error message
+    Output is a sql query
+    After running this tool, you can run sql_db_query tool to get the result
+    """
+    sqlcreatorllm: BaseLanguageModel = Field(exclude=True) 
+    
+
+    class Config(StateTool.Config):
+        """Configuration for this pydantic object."""
+
+        arbitrary_types_allowed = True
+        extra = Extra.allow
+
+    def __init__(__pydantic_self__, **data: Any) -> None:
+        """Initialize the tool."""
+        super().__init__(**data)
+
+    def _run(
+        self,
+        user_input: str,
+        run_manager: Optional[CallbackManagerForToolRun] = None,
+    ) -> str:
+        """Get the SQL query for the incorrect query."""
+        return self._create_sql_query(user_input)
+
+    async def _arun(
+        self,
+        table_name: str,
+        run_manager: Optional[AsyncCallbackManagerForToolRun] = None,
+    ) -> str:
+        raise NotImplementedError("SqlQueryCreatorTool does not support async")
+
+    def _create_sql_query(self,user_input):
+        
+        sql_query = self._extract_sql_query()
+        error_message = self._extract_error_message()
+        if sql_query is None:
+            return "This tool is not meant to be run directly. Start with a SQLQueryCreatorTool"
+        
+        prompt_input = PromptTemplate(
+            input_variables=["user_input","sql_query", "error_message"],
+            template=SQL_QUERY_CREATOR_RETRY
+        )
+        query_creator_chain = LLMChain(llm=self.sqlcreatorllm, prompt=prompt_input)
+
+        sql_query = query_creator_chain.run(
+                    (
+                        {
+                            "sql_query": sql_query,
+                            "error_message": error_message,
+                            "user_input": user_input
+                        }
+                    )
+                )
+        sql_query = sql_query.replace("```","")
+        sql_query = sql_query.replace("sql","")
+        
+        return sql_query
+    
+    def _extract_sql_query(self):
+        for value in reversed(self.state):
+            for key, input_string in value.items():
+                if "tool='retry_sql_db_query_creator'" in key:
+                    return input_string
+                elif "tool='sql_db_query_creator'" in key:
                     return input_string
         return None
 
-
-
+    def _extract_error_message(self):
+        for value in reversed(self.state):
+            for key, input_string in value.items():
+                if "tool='sql_db_query'" in key:
+                    if "Error" in input_string:
+                        return input_string
+        return None
+    
 class SqlQueryCreatorTool(StateTool):
     """Tool for creating SQL query.Use this to create sql query."""
 
@@ -147,43 +233,24 @@ class SqlQueryCreatorTool(StateTool):
     def _create_sql_query(self,user_input):
         
         few_shot_examples = self._parse_few_shot_examples()
-        sql_query = self._extract_sql_query()
         db_schema = self._parse_db_schema()
         data_model_context = self._parse_data_model_context()
-        if sql_query is None:
-            prompt_input = PromptTemplate(
-                input_variables=["db_schema", "user_input", "few_shot_examples","data_model_context"],
-                template=self.SQL_QUERY_CREATOR_TEMPLATE,
-            )
-            query_creator_chain = LLMChain(llm=self.sqlcreatorllm, prompt=prompt_input)
+        prompt_input = PromptTemplate(
+            input_variables=["db_schema", "user_input", "few_shot_examples","data_model_context"],
+            template=self.SQL_QUERY_CREATOR_TEMPLATE,
+        )
+        query_creator_chain = LLMChain(llm=self.sqlcreatorllm, prompt=prompt_input)
 
-            sql_query = query_creator_chain.run(
-                        (
-                            {
-                                "db_schema": db_schema,
-                                "user_input": user_input,
-                                "few_shot_examples": few_shot_examples,
-                                "data_model_context": data_model_context
-                            }
-                        )
+        sql_query = query_creator_chain.run(
+                    (
+                        {
+                            "db_schema": db_schema,
+                            "user_input": user_input,
+                            "few_shot_examples": few_shot_examples,
+                             "data_model_context": data_model_context
+                        }
                     )
-        else:
-            prompt_input = PromptTemplate(
-                input_variables=["db_schema", "user_input", "few_shot_examples","data_model_context"],
-                template=SQL_QUERY_CREATOR_RETRY
-            )
-            query_creator_chain = LLMChain(llm=self.sqlcreatorllm, prompt=prompt_input)
-
-            sql_query = query_creator_chain.run(
-                        (
-                            {
-                                "db_schema": db_schema,
-                                "user_input": user_input,
-                                "few_shot_examples": few_shot_examples,
-                                "data_model_context": data_model_context
-                            }
-                        )
-                    )
+                )
         sql_query = sql_query.replace("```","")
         sql_query = sql_query.replace("sql","")
         
