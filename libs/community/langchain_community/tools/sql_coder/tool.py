@@ -66,7 +66,9 @@ class QuerySparkSQLDataBaseTool(StateTool):
         )
         executable_query = executable_query.strip('\"')
         executable_query = re.sub('\\n```', '',executable_query)
-        self.db.run_no_throw(executable_query)
+        executable_query = executable_query.rstrip(";")
+        if "LIMIT".lower() not in executable_query.lower():
+            executable_query = f"{executable_query} LIMIT 50"
         return self.db.run_no_throw(executable_query, include_columns=True)
 
     async def _arun(

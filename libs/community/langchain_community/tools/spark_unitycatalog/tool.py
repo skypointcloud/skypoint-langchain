@@ -355,7 +355,10 @@ class QueryUCSQLDataBaseTool(StateTool):
             else:
                 executable_query = query.strip()
             executable_query = executable_query.strip('"')
-            return self.db.run_no_throw(executable_query)
+            executable_query = executable_query.rstrip(";")
+            if "LIMIT".lower() not in executable_query.lower():
+                executable_query = f"{executable_query} LIMIT 50"
+            return self.db.run_no_throw(executable_query , include_columns= True)
         else:
             return "This tool is not meant to be run directly. Start with a ListUnityCatalogTablesTool"
 
