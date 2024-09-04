@@ -13,6 +13,7 @@ from langchain_community.tools import BaseTool
 from langchain_community.tools.sql_coder.tool import (
     QuerySparkSQLDataBaseTool,
     SqlQueryCreatorTool,
+    RetrySqlQueryCreatorTool
 )
 
 class SQLCoderToolkit(BaseToolkit):
@@ -54,6 +55,7 @@ class SQLCoderToolkit(BaseToolkit):
                 db=self.db, description=query_sql_database_tool_description
             ),
             QuerySQLCheckerTool(db=self.db, llm=self.llm),
+            RetrySqlQueryCreatorTool(sqlcreatorllm=self.sqlcreatorllm),
             SqlQueryCreatorTool(
                 sqlcreatorllm=self.sqlcreatorllm , 
                 db=self.db,

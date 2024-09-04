@@ -1,8 +1,20 @@
 
 
 SQL_QUERY_CREATOR_RETRY  = """
-You have failed in the first attempt to generate correct sql query. Please try again to rewrite correct sql query.
-"""
+Your task is convert an incorrect query resulting from user question to a correct query which is databricks sql compatible.
+Adhere to these rules:
+- **Deliberately go through the question and database schema word by word** to appropriately answer the question
+- **Use Table Aliases** to prevent ambiguity. For example, `SELECT table1.col1, table2.col1 FROM table1 JOIN table2 ON table1.id = table2.id`.
+- When creating a ratio, always cast the numerator as float
+
+### Task:
+Generate a correct SQL query that answers the question [QUESTION]`{user_input}`[/QUESTION].
+The query you will correct is: {sql_query}
+The error message is: {error_message}
+
+### Response:
+Based on your instructions, here is the SQL query I have generated 
+[SQL]"""
 
 SQL_QUERY_CREATOR_7b = """
 ### Instructions:
